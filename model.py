@@ -9,9 +9,9 @@ class URLClassifer(nn.Module):
         hidden_dim: int,
         num_heads: int,
         num_layers: int,
-        dropout: float = 0.1,
+        seq_len: int,
+        dropout: float,
         vocab_size: int = 256,
-        seq_len: int = 128,
     ) -> None:
         super().__init__()
 
@@ -26,17 +26,11 @@ class URLClassifer(nn.Module):
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        self.classifer = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, 1),
-        )
+        self.fc = nn.Linear(hidden_dim, 1)
 
     def forward(self, x: Tensor) -> Tensor:
         x = self.embedding(x) + self.positional_encoding[:, : x.size(1), :]
         x = self.transformer(x)
-        x = x.mean(dim=1)
-        x = self.classifer(x).flatten()
+        x = x[:, 0]
+        x = self.fc(x).flatten()
         return x
