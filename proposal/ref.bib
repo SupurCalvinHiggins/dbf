@@ -1,0 +1,36 @@
+@article{naor_eylon_2019,
+author = {Naor, Moni and Eylon, Yogev},
+title = {Bloom Filters in Adversarial Environments},
+year = {2019},
+% issue_date = {July 2019},
+% publisher = {Association for Computing Machinery},
+% address = {New York, NY, USA},
+% volume = {15},
+% number = {3},
+% issn = {1549-6325},
+% url = {https://doi.org/10.1145/3306193},
+doi = {10.1145/3306193},
+abstract = {Many efficient data structures use randomness, allowing them to improve upon deterministic ones. Usually, their efficiency and correctness are analyzed using probabilistic tools under the assumption that the inputs and queries are independent of the internal randomness of the data structure. In this work, we consider data structures in a more robust model, which we call the adversarial model. Roughly speaking, this model allows an adversary to choose inputs and queries adaptively according to previous responses. Specifically, we consider a data structure known as a “Bloom filter” and prove a tight connection between Bloom filters in this model and cryptography.A Bloom filter represents a set S of elements approximately by using fewer bits than a precise representation. The price for succinctness is allowing for some errors: For any x ∈ S, it should always answer Yes, and for any x ∉ S it should answer Yes only with small probability.In the adversarial model, we consider both efficient adversaries (that run in polynomial time) and computationally unbounded adversaries that are only bounded in the number of queries they can make. For computationally bounded adversaries, we show that non-trivial (memory-wise) Bloom filters exist if and only if one-way functions exist. For unbounded adversaries, we show that there exists a Bloom filter for sets of size n and error ε that is secure against t queries and uses only O(n log 1/ε + t) bits of memory. In comparison, n log 1/ε is the best possible under a non-adaptive adversary.},
+% journal = {ACM Trans. Algorithms},
+% month = jun,
+% articleno = {35},
+% numpages = {30},
+% keywords = {Bloom filter, adaptive inputs, pseudorandom functions, streaming algorithm}
+}
+
+@article{bishop_tirmazi_2025,
+      title={Adversary Resilient Learned Bloom Filters}, 
+      author={Allison Bishop and Hayder Tirmazi},
+      year={2025},
+      eprint={2409.06556},
+      archivePrefix={arXiv},
+      % primaryClass={cs.CR},
+      % url={https://arxiv.org/abs/2409.06556}, 
+}
+
+@article{kraska_beutel_chi_dean_polyzotis_2018,
+title	= {The Case for Learned Index Structures},
+author	= {Tim Kraska and Alex Beutel and Ed H. Chi and Jeff Dean and Neoklis Polyzotis},
+year	= {2018},
+% URL	= {https://arxiv.org/abs/1712.01208}
+}

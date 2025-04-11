@@ -1,0 +1,84 @@
+\documentclass{article}
+\usepackage{amssymb}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{float}
+\usepackage{biblatex}
+
+\bibliography{ref.bib}
+
+\title{CSC 592 Project Proposal}
+\author{Calvin Higgins}
+\date{February 2025}
+
+\begin{document}
+
+\maketitle
+
+\section{Background}
+
+\subsection{Approximate Membership Query Filters}
+
+Approximate membership query (AMQ) filters on a set $S$ provide a query method $Q$ such that
+\begin{enumerate}
+    \item If $x \in S$, $Q(x)$ outputs $x \in S$.
+    \item If $x \not \in S$, $\mathbb{P}[Q(x) \text{ outputs } x \in S] \leq \epsilon$.
+\end{enumerate}
+where $0 < \epsilon < 1$. That is, the query method $Q$ checks if $x \in S$ with bounded false positive rate $\epsilon$.
+
+\subsection{Naor-Eylon Filters}
+
+Naor-Eylon filters \cite{naor_eylon_2019} provably defend AMQ filters against probabilistic polynomial-time (PPT) adversaries. They store the set $F(S)$ in an AMQ filter where $F$ is a pseudo-random permutation (PRP). Let $Q_\text{NE}$ be the Naor-Eylon filter method and $Q_\text{AMQ}$ be the AMQ query method. Then
+\begin{enumerate}
+    \item For all $x$, $Q_\text{NE}(x)$ outputs $Q_\text{AMQ}(F(x))$.
+\end{enumerate}
+If there exists a PPT adversary that non-negligibly degrades the false positive rate, then PRPs do not exist and $\mathbf{P} =\mathbf{NP}$.
+
+\subsection{Learned Bloom Filters}
+
+Learned Bloom filters (LBFs) \cite{kraska_beutel_chi_dean_polyzotis_2018} augment standard AMQ filters with a machine learning model $Q_\text{M}$ that filters ``easy" queries. Given an element $x$, $Q_\text{M}$ is trained to output $x \in S$. As $Q_\text{M}$ might have non-zero false negative rate, negative queries are checked against an AMQ filter containing all false negatives. Let $Q_\text{LBF}$ be the LBF query method and $Q_\text{AMQ}$ be the AMQ filter query method. Then
+\begin{enumerate}
+    \item If $Q_\text{M}(x)$ outputs $x \in S$, $Q_\text{LBF}(x)$ outputs $x \in S$.
+    \item If $Q_\text{M}(x)$ outputs $x \not \in S$, $Q_\text{LBF}(x)$ outputs $Q_\text{AMQ}(x)$.
+\end{enumerate}
+where the $Q_\text{AMQ}$ false positive rate $\epsilon_\text{AMQ}$ is derived from the desired false positive rate $\epsilon_\text{LBF}$. In short, LBFs first predict if $x \in S$ with a machine learning model $M$ and then recover the bounded single-tailed error by querying a standard AMQ filter.
+
+\section{Summary}
+
+The paper \cite{bishop_tirmazi_2025} introduces a secure LBF variant called the Downtown Bodega filter (DBF). The DBF verifies the machine learning model $Q_\text{M}$'s output with two Naor-Eylon filters. One filter contains all true positives while the other contains all false negatives. Let $Q_\text{DBF}$ be the DBF query method, $Q_\text{TP}$ be the true positive filter, and $Q_\text{FN}$ be the false negative filter. Then
+\begin{enumerate}
+    \item If $Q_\text{M}(x)$ outputs $x \in S$, $Q_\text{DBF}(x)$ outputs $Q_\text{TP}(x)$.
+    \item If $Q_\text{M}(x)$ outputs $x \not \in S$, $Q_\text{DBF}(x)$ outputs $Q_\text{FN}(x)$.
+\end{enumerate}
+The authors prove that DBFs are secure against PPT adversaries, and simulate the expected false positive rate of DBFs and Naor-Eylon filters on real datasets.
+
+\section{Threat Model}
+
+Under the proposed threat model, the attacker provides a PPT adversary which
+\begin{enumerate}
+    \item Constructs the set $S$.
+    \item Views the internal state of the DBF except for the two PRPs $F_\text{TP}$ and $F_\text{FN}$.
+    \item Submits at most $t$ queries to the DBF.
+\end{enumerate}
+and then outputs novel false positive with non-negligible probability $\epsilon_\text{DB} + \omega\left(\frac{1}{\lambda^c}\right)$. That is, the attacker must be able to construct new inputs that degrade the false positive rate. This threat model is essentially white-box except for the secret PRPs and the attacker's control of the training data.
+
+\section{Experiments}
+
+The authors simulate the expected false positive rate of DBFs against Naor-Eylon filters with a fixed memory budget. They find that DBFs have a lower false positive rate when the adversary controls only some queries while Naor-Eylon filters have a lower false positive rate when the adversary controls most queries. While DBFs have bounded maximum false positive rate, the expected false positive rate is degraded by tricking the learned model to redirect queries to the ``wrong" AMQ filter.
+
+\section{Challenging Concepts}
+
+I had a tough time with the following concepts
+\begin{enumerate}
+    \item Probabilistic polynomial time adversaries
+    \item Negligible functions
+    \item Security parameters
+    \item Pseudo-random permutations
+\end{enumerate}
+and might need to revisit them later. 
+
+\printbibliography
+
+\end{document}
