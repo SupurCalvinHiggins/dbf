@@ -8,14 +8,14 @@ def main(data_path: str) -> None:
         rows = list(reader)
 
     seq_lens = [len(url) for url, _ in rows]
-    plt.hist(seq_lens)
+    plt.hist(seq_lens, bins=20, range=(0, 512))
     plt.xlabel("Length of URLs")
     plt.show()
 
     y = [not label.startswith("benign") for _, label in rows]
     false = y.count(False)
     true = y.count(True)
-    plt.bar([False, True], [false, true])
+    plt.bar(["False", "True"], [false, true])
     plt.xlabel("Labels")
     plt.ylabel("Count")
     plt.show()
