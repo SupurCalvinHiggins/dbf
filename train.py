@@ -12,6 +12,15 @@ from tqdm import tqdm
 device = torch.device("cuda")
 
 
+def summary(model: URLClassifer) -> None:
+    total_size_bytes = 0
+    for param in model.parameters():
+        total_size_bytes += param.numel() * param.element_size()
+    print(f"Model [1/1]: size = {total_size_bytes}B")
+    print(f"Model [1/1]: size = {total_size_bytes / 1_000_000:.4f}MB")
+
+
+@torch.enable_grad()
 def train(
     model: URLClassifer,
     dataset: URLDataset,
@@ -21,6 +30,8 @@ def train(
     threshold: float,
     num_workers: int,
 ) -> URLClassifer:
+    model.train()
+
     loader = DataLoader(
         dataset,
         batch_size,
@@ -32,17 +43,6 @@ def train(
     criteron = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, fused=True)
     scaler = torch.amp.GradScaler("cuda")
-
-    total_size_bytes = 0
-    for param in model.parameters():
-        total_size_bytes += param.numel() * param.element_size()
-    print(f"Model [1/1] SIZE = {total_size_bytes}B")
-    print(f"Model [1/1] SIZE = {total_size_bytes / 1_000:.4f}KB")
-    print(f"Model [1/1] SIZE = {total_size_bytes / 1_000_000:.4f}MB")
-
-    model = model.to(device=device)
-    torch.compile(model, mode="max-autotune")
-    model.train()
 
     for epoch in range(epochs):
         tp = torch.tensor(0.0, device=device)
@@ -89,13 +89,73 @@ def train(
         fnr = fn / count
         acc = tpr + tnr
 
-        print(f"Epoch [{epoch + 1}/{epochs}] ACC = {100 * acc:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}] TPR = {100 * tpr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}] FPR = {100 * fpr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}] TNR = {100 * tnr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}] FNR = {100 * fnr:.2f}%")
+        print(f"Epoch [{epoch + 1}/{epochs}]: acc = {100 * acc:.2f}%")
+        print(f"Epoch [{epoch + 1}/{epochs}]: tpr = {100 * tpr:.2f}%")
+        print(f"Epoch [{epoch + 1}/{epochs}]: fpr = {100 * fpr:.2f}%")
+        print(f"Epoch [{epoch + 1}/{epochs}]: tnr = {100 * tnr:.2f}%")
+        print(f"Epoch [{epoch + 1}/{epochs}]: fnr = {100 * fnr:.2f}%")
 
     return model
+
+
+@torch.no_grad()
+def test(
+    model: URLClassifer,
+    dataset: URLDataset,
+    batch_size: int,
+    threshold: float,
+    num_workers: int,
+) -> None:
+    model.eval()
+
+    loader = DataLoader(
+        dataset,
+        batch_size,
+        num_workers=num_workers,
+    )
+
+    tp = torch.tensor(0.0, device=device)
+    fp = torch.tensor(0.0, device=device)
+    tn = torch.tensor(0.0, device=device)
+    fn = torch.tensor(0.0, device=device)
+
+    for _, x, y in tqdm(loader, desc="Test [1/1]"):
+        x, y = (
+            x.to(device, non_blocking=True),
+            y.to(device, non_blocking=True),
+        )
+
+        with torch.autocast("cuda", torch.float16):
+            pred_y = model(x)
+
+        p = y > threshold
+        n = ~p
+
+        pred_p = F.sigmoid(pred_y) > threshold
+        pred_n = ~pred_p
+
+        tp += (p & pred_p).sum()
+        fp += (n & pred_p).sum()
+        tn += (n & pred_n).sum()
+        fn += (p & pred_n).sum()
+
+    tp = tp.item()
+    fp = fp.item()
+    tn = tn.item()
+    fn = fn.item()
+
+    count = tp + fp + tn + fn
+    tpr = tp / count
+    fpr = fp / count
+    tnr = tn / count
+    fnr = fn / count
+    acc = tpr + tnr
+
+    print(f"Test [1/1]: acc = {100 * acc:.2f}%")
+    print(f"Test [1/1]: tpr = {100 * tpr:.2f}%")
+    print(f"Test [1/1]: fpr = {100 * fpr:.2f}%")
+    print(f"Test [1/1]: tnr = {100 * tnr:.2f}%")
+    print(f"Test [1/1]: fnr = {100 * fnr:.2f}%")
 
 
 def main(cfg: dict) -> None:
@@ -105,11 +165,14 @@ def main(cfg: dict) -> None:
         cfg["num_layers"],
         dropout=cfg["dropout"],
         seq_len=cfg["seq_len"],
-    )
-    dataset = URLDataset.from_csv(Path(cfg["dataset_path"]), seq_len=cfg["seq_len"])
+    ).to(device=device)
+    torch.compile(model, mode="max-autotune")
+    summary(model)
+
+    train_dataset = URLDataset.from_csv(Path(cfg["train_path"]), seq_len=cfg["seq_len"])
     model = train(
         model,
-        dataset,
+        train_dataset,
         epochs=cfg["epochs"],
         batch_size=cfg["batch_size"],
         learning_rate=cfg["learning_rate"],
@@ -117,18 +180,24 @@ def main(cfg: dict) -> None:
         num_workers=cfg["num_workers"],
     )
 
-    model = model.cpu()
-    model.eval()
-    torch.save(model.state_dict(), cfg["model_path"])
+    test_dataset = URLDataset.from_csv(Path(cfg["test_path"]), seq_len=cfg["seq_len"])
+    test(
+        model,
+        test_dataset,
+        batch_size=cfg["batch_size"],
+        threshold=cfg["threshold"],
+        num_workers=cfg["num_workers"],
+    )
 
-    # TODO: tune optimal threshold.
-    # TODO: validate.
+    model = model.cpu()
+    torch.save(model.state_dict(), cfg["model_path"])
 
 
 if __name__ == "__main__":
     cfg = {
         # Dataset.
-        "dataset_path": "data/malicious_phish.csv",
+        "train_path": "data/train.csv",
+        "test_path": "data/test.csv",
         "seq_len": 128,
         "num_workers": 8,
         # Model.

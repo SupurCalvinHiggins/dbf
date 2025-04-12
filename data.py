@@ -9,7 +9,7 @@ from pathlib import Path
 
 class URLDataset(Dataset):
     @staticmethod
-    def from_csv(csv_path: Path, seq_len: int = 128) -> URLDataset:
+    def from_csv(csv_path: Path, seq_len: int) -> URLDataset:
         urls = []
         labels = []
 
@@ -17,7 +17,7 @@ class URLDataset(Dataset):
             reader = csv.reader(f)
             for url, label in reader:
                 urls.append(url)
-                labels.append(label != "benign")
+                labels.append(not label.startswith("benign"))
 
         return URLDataset(urls, labels, seq_len)
 
