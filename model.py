@@ -34,3 +34,6 @@ class URLClassifer(nn.Module):
         x = x[:, 0]
         x = self.fc(x).flatten()
         return x
+
+    def size_in_bytes(self) -> int:
+        return sum(param.numel() * param.element_size() for param in self.parameters())

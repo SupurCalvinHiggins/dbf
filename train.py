@@ -12,14 +12,6 @@ from tqdm import tqdm
 device = torch.device("cuda")
 
 
-def summary(model: URLClassifer) -> None:
-    total_size_bytes = 0
-    for param in model.parameters():
-        total_size_bytes += param.numel() * param.element_size()
-    print(f"Model [1/1]: size = {total_size_bytes}B")
-    print(f"Model [1/1]: size = {total_size_bytes / 1_000_000:.4f}MB")
-
-
 @torch.enable_grad()
 def train(
     model: URLClassifer,
@@ -105,7 +97,7 @@ def test(
     batch_size: int,
     threshold: float,
     num_workers: int,
-) -> None:
+) -> tuple[float, float, float, float]:
     model.eval()
 
     loader = DataLoader(
@@ -157,6 +149,8 @@ def test(
     print(f"Test [1/1]: tnr = {100 * tnr:.2f}%")
     print(f"Test [1/1]: fnr = {100 * fnr:.2f}%")
 
+    return tpr, fpr, tnr, fnr
+
 
 def main(cfg: dict) -> None:
     model = URLClassifer(
@@ -167,7 +161,8 @@ def main(cfg: dict) -> None:
         seq_len=cfg["seq_len"],
     ).to(device=device)
     torch.compile(model, mode="max-autotune")
-    summary(model)
+    print(f"Model [1/1]: size = {model.size_in_bytes()}B")
+    print(f"Model [1/1]: size = {model.size_in_bytes() / 1_000_000:.4f}MB")
 
     train_dataset = URLDataset.from_csv(Path(cfg["train_path"]), seq_len=cfg["seq_len"])
     model = train(
