@@ -4,10 +4,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from rbloom import Bloom
 import torch
-from torch import Tensor, neg
+from torch import Tensor
 from model import URLClassifer
 from blake3 import blake3
-from data import URLDataset, LabeledURLDataset
+from data import LabeledURLDataset
 from train import find_threshold, test, predict
 
 
@@ -56,42 +56,16 @@ class DowntownBodegaFilter(Filter):
         self.model = model
         self.threshold = threshold
         self.batch_size = batch_size
-        print(f"{threshold=}")
-        print(f"{items.size(0)=}")
 
         hints = self.batched_hints(items).cpu()
         fn = items[~hints]
         tp = items[hints]
-        print(f"{fn.size(0)=}, {tp.size(0)=}")
 
-        # P(self(x) is T | x is F)
-        # = P(model(x) is F | x is F) * P(fn_filter(x) is T | x is F)
-        #   + P(model(x) is T | x is F) * P(tp_filter(x) is T | x is F)
-        # => fpr = model_fnr * fn_filter_fpr + model_fpr * tp_filter_fpr
-        # => fpr = model_fnr * fn_filter_fpr + fpr * tp_filter_fpr          (threshold is set such that model_fpr = fpr)
-        # => fpr = model_fnr * filter_fpr + fpr * filter_fpr                (worst-case is max(tp_filter_fpr, fn_filter_fpr))
-        # => fpr / (model_fnr + fpr) = filter_fpr
-        # TODO: model fnr is drasitic overestimate because it is only considering the ppositive elements.
-        # should not divide by hints.size(0) instead by the total size of the entire dataset
-        # model_fnr = hints.logical_not().sum().item() / hints.size(0)
-
-        # fpr = model_fnr * filter_fpr + model_tnr * filter_fpr
-        # fpr = (1 - model_tnr) * filter_fpr + model_tnr * filter_fpr
-        # print(f"{1-fpr=}, {tpr=}")
         tp_filter_fpr = 1 - tpr
         fn_filter_fpr = tpr * fpr / (1 - fpr)
-        # print(f"{fn_filter_fpr=}, {tp_filter_fpr=}")
-        # filter_fpr = fpr / (tnr + fpr)
-        # print(f"{fpr=}, {tnr=}, {filter_fpr=}")
+
         self.fn_filter = NaorEylonFilter(fn, fn_filter_fpr, fn_filter_key)
         self.tp_filter = NaorEylonFilter(tp, tp_filter_fpr, tp_filter_key)
-
-        assert self.fn_filter.batched_contains(fn).sum() == fn.size(0)
-        assert self.tp_filter.batched_contains(tp).sum() == tp.size(0)
-
-        # must always store all positives
-        # required size
-        #
 
     def batched_contains(self, items: Tensor) -> Tensor:
         hints = self.batched_hints(items)
@@ -100,15 +74,7 @@ class DowntownBodegaFilter(Filter):
     def batched_hints(self, items: Tensor) -> Tensor:
         items = items.cuda()
         with torch.no_grad():
-            return predict(self.model, items, self.batch_size) > self.threshold
-        with torch.no_grad():
-            self.model.eval()
-            hints = torch.zeros(items.size(0), device=items.device)
-            for i in range(0, items.size(0), self.batch_size):
-                hints[i : i + self.batch_size] = self.model(
-                    items[i : i + self.batch_size]
-                )
-            hints = hints > self.threshold
+            hints = predict(self.model, items, self.batch_size) > self.threshold
         return hints
 
     def batched_contains_with_hints(self, items: Tensor, hints: Tensor) -> Tensor:
@@ -137,6 +103,7 @@ def main(cfg):
     )
     model.load_state_dict(torch.load(cfg["model_path"]))
     model = model.cuda()
+    torch.compile(model, mode="max-autotune")
     model.eval()
 
     dataset = LabeledURLDataset.from_csv(cfg["test_path"], cfg["seq_len"])

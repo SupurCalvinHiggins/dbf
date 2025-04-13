@@ -66,7 +66,7 @@ class LabeledURLDataset(URLDataset):
         return self._y
 
 
-class FalsePositiveURLDataset(URLDataset):
+class FilteredURLDataset(URLDataset):
     def __init__(
         self, filter, threshold: float, batch_size: int, count: int, seq_len: int
     ):
@@ -78,12 +78,19 @@ class FalsePositiveURLDataset(URLDataset):
         self.reset()
 
     def reset(self):
-        # TODO: Fix me.
-        self.X = torch.randint(0, 256, (self.count, self.seq_len))
-        self.y = self.filter.batched_contains(self.X)
+        self._X = torch.randint(0, 256, (self.count, self.seq_len))
+        self._y = self.filter.batched_contains(self.X)
 
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
-        return self.X[index], self.y[index]
+        return self._X[index], self._y[index]
 
     def __len__(self) -> int:
         return self.count
+
+    @property
+    def X(self) -> Tensor:
+        return self._X
+
+    @property
+    def y(self) -> Tensor:
+        return self._y
