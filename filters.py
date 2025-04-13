@@ -45,7 +45,7 @@ class DowntownBodegaFilter(Filter):
         self,
         items: Tensor,
         fpr: float,
-        tnr: float,
+        tpr: float,
         model: URLClassifer,
         threshold: float,
         batch_size: int,
@@ -77,10 +77,14 @@ class DowntownBodegaFilter(Filter):
 
         # fpr = model_fnr * filter_fpr + model_tnr * filter_fpr
         # fpr = (1 - model_tnr) * filter_fpr + model_tnr * filter_fpr
-        filter_fpr = fpr / (tnr + fpr)
-        print(f"{fpr=}, {tnr=}, {filter_fpr=}")
-        self.fn_filter = NaorEylonFilter(fn, filter_fpr, fn_filter_key)
-        self.tp_filter = NaorEylonFilter(tp, filter_fpr, tp_filter_key)
+        # print(f"{1-fpr=}, {tpr=}")
+        tp_filter_fpr = 1 - tpr
+        fn_filter_fpr = tpr * fpr / (1 - fpr)
+        # print(f"{fn_filter_fpr=}, {tp_filter_fpr=}")
+        # filter_fpr = fpr / (tnr + fpr)
+        # print(f"{fpr=}, {tnr=}, {filter_fpr=}")
+        self.fn_filter = NaorEylonFilter(fn, fn_filter_fpr, fn_filter_key)
+        self.tp_filter = NaorEylonFilter(tp, tp_filter_fpr, tp_filter_key)
 
         assert self.fn_filter.batched_contains(fn).sum() == fn.size(0)
         assert self.tp_filter.batched_contains(tp).sum() == tp.size(0)
@@ -143,7 +147,7 @@ def main(cfg):
         cfg["batch_size"],
         verbose=True,
     )
-    _, fpr, tnr, _ = test(
+    tpr, fpr, _, _ = test(
         model, dataset, cfg["batch_size"], threshold, num_workers=8, verbose=True
     )
 
@@ -156,7 +160,7 @@ def main(cfg):
     filter = DowntownBodegaFilter(
         pos_x,
         fpr,
-        tnr,
+        tpr,
         model,
         threshold,
         cfg["batch_size"],
@@ -187,6 +191,11 @@ def main(cfg):
     print(f"{tp_filter_fpr=}")
     print(f"{fn_filter_fpr=}")
     print(f"{ne_filter_fpr=}")
+
+    print(f"{filter.size_in_bytes()=}")
+    print(f"{filter.tp_filter.size_in_bytes()=}")
+    print(f"{filter.fn_filter.size_in_bytes()=}")
+    print(f"{ne_filter.size_in_bytes()=}")
 
 
 if __name__ == "__main__":
