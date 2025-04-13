@@ -5,11 +5,28 @@ import csv
 from torch.utils.data import Dataset
 from torch import Tensor
 from pathlib import Path
+from abc import ABC, abstractmethod
 
 
-class URLDataset(Dataset):
+class URLDataset(Dataset, ABC):
+    @abstractmethod
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]: ...
+
+    @abstractmethod
+    def __len__(self) -> int: ...
+
+    @property
+    @abstractmethod
+    def X(self) -> Tensor: ...
+
+    @property
+    @abstractmethod
+    def y(self) -> Tensor: ...
+
+
+class LabeledURLDataset(URLDataset):
     @staticmethod
-    def from_csv(csv_path: Path, seq_len: int) -> URLDataset:
+    def from_csv(csv_path: Path, seq_len: int) -> LabeledURLDataset:
         urls = []
         labels = []
 
@@ -19,15 +36,54 @@ class URLDataset(Dataset):
                 urls.append(url)
                 labels.append(not label.startswith("benign"))
 
-        return URLDataset(urls, labels, seq_len)
+        return LabeledURLDataset.from_str(urls, labels, seq_len)
 
-    def __init__(self, urls: list[str], labels: list[bool], seq_len: int) -> None:
-        clean_urls = [url.encode().ljust(seq_len, b"\x00")[:seq_len] for url in urls]
-        self.X = torch.tensor([list(url) for url in clean_urls], dtype=torch.int)
-        self.y = torch.tensor(labels, dtype=torch.float)
+    @staticmethod
+    def from_str(
+        urls: list[str], labels: list[bool], seq_len: int
+    ) -> LabeledURLDataset:
+        encoded_urls = [url.encode().ljust(seq_len, b"\x00")[:seq_len] for url in urls]
+        X = torch.tensor([list(url) for url in encoded_urls], dtype=torch.int)
+        y = torch.tensor(labels, dtype=torch.float)
+        return LabeledURLDataset(X, y)
 
-    def __getitem__(self, index: int) -> tuple[int, Tensor, Tensor]:
-        return index, self.X[index], self.y[index]
+    def __init__(self, X: Tensor, y: Tensor) -> None:
+        self._X = X
+        self._y = y
+
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+        return self._X[index], self._y[index]
 
     def __len__(self) -> int:
-        return len(self.y)
+        return len(self._y)
+
+    @property
+    def X(self) -> Tensor:
+        return self._X
+
+    @property
+    def y(self) -> Tensor:
+        return self._y
+
+
+class FalsePositiveURLDataset(URLDataset):
+    def __init__(
+        self, filter, threshold: float, batch_size: int, count: int, seq_len: int
+    ):
+        self.filter = filter
+        self.threshold = threshold
+        self.batch_size = batch_size
+        self.count = count
+        self.seq_len = seq_len
+        self.reset()
+
+    def reset(self):
+        # TODO: Fix me.
+        self.X = torch.randint(0, 256, (self.count, self.seq_len))
+        self.y = self.filter.batched_contains(self.X)
+
+    def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
+        return self.X[index], self.y[index]
+
+    def __len__(self) -> int:
+        return self.count

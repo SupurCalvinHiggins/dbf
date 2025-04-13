@@ -1,25 +1,29 @@
 from __future__ import annotations
 
 
-import math
+from abc import ABC, abstractmethod
 from rbloom import Bloom
 import torch
-from torch import Tensor
+from torch import Tensor, neg
 from model import URLClassifer
 from blake3 import blake3
-from data import URLDataset
-from train import test
+from data import URLDataset, LabeledURLDataset
+from train import find_threshold, test, predict
 
 
-class NaorEylonFilter:
-    def __init__(self, items: Tensor, fpr: float, key: bytes, bits: int) -> None:
-        n = math.ceil(-(math.log(2) ** 2) * bits / math.log(fpr))
-        # self.filter = Bloom(n, fpr, hash_func=self.hash)
-        print("filter args", items.size(0), fpr)
+class Filter(ABC):
+    @abstractmethod
+    def batched_contains(self, items: Tensor) -> Tensor: ...
+
+    @abstractmethod
+    def size_in_bytes(self) -> int: ...
+
+
+class NaorEylonFilter(Filter):
+    def __init__(self, items: Tensor, fpr: float, key: bytes) -> None:
         self.filter = Bloom(items.size(0), fpr, hash_func=self.hash)
-        print(self.filter.size_in_bits)
-        self.key = key
         self.fpr = fpr
+        self.key = key
 
         items = items.cpu()
         for item in items:
@@ -36,38 +40,12 @@ class NaorEylonFilter:
         return self.filter.size_in_bits // 8
 
 
-def find_threshold(
-    model: URLClassifer,
-    dataset: URLDataset,
-    fpr: float,
-    batch_size: int,
-    num_workers: int,
-    iterations: int = 2,  # 16,
-) -> float:
-    left = 0.0
-    right = 1.0
-    for _ in range(iterations):
-        mid = (left + right) / 2
-        # TODO: replace me.
-        _, test_fpr, _, _ = test(
-            model,
-            dataset,
-            batch_size=batch_size,
-            threshold=mid,
-            num_workers=num_workers,
-        )
-        if test_fpr > fpr:
-            left = mid
-        else:
-            right = mid
-    return left
-
-
-class DowntownBodegaFilter:
+class DowntownBodegaFilter(Filter):
     def __init__(
         self,
         items: Tensor,
         fpr: float,
+        tnr: float,
         model: URLClassifer,
         threshold: float,
         batch_size: int,
@@ -78,10 +56,13 @@ class DowntownBodegaFilter:
         self.model = model
         self.threshold = threshold
         self.batch_size = batch_size
+        print(f"{threshold=}")
+        print(f"{items.size(0)=}")
 
         hints = self.batched_hints(items).cpu()
         fn = items[~hints]
         tp = items[hints]
+        print(f"{fn.size(0)=}, {tp.size(0)=}")
 
         # P(self(x) is T | x is F)
         # = P(model(x) is F | x is F) * P(fn_filter(x) is T | x is F)
@@ -89,16 +70,24 @@ class DowntownBodegaFilter:
         # => fpr = model_fnr * fn_filter_fpr + model_fpr * tp_filter_fpr
         # => fpr = model_fnr * fn_filter_fpr + fpr * tp_filter_fpr          (threshold is set such that model_fpr = fpr)
         # => fpr = model_fnr * filter_fpr + fpr * filter_fpr                (worst-case is max(tp_filter_fpr, fn_filter_fpr))
-        # => fpr / 2 * (model_fnr + fpr) = filter_fpr
-        model_fnr = hints.logical_not().sum().item() / hints.size(0)
-        filter_fpr = fpr / (2 * (model_fnr + fpr))
-        print("model args", model_fnr, fpr, filter_fpr)
-        self.fn_filter = NaorEylonFilter(
-            fn, filter_fpr, fn_filter_key, int(170_000 * 0.9)
-        )
-        self.tp_filter = NaorEylonFilter(
-            tp, filter_fpr, tp_filter_key, int(170_000 * 0.1)
-        )
+        # => fpr / (model_fnr + fpr) = filter_fpr
+        # TODO: model fnr is drasitic overestimate because it is only considering the ppositive elements.
+        # should not divide by hints.size(0) instead by the total size of the entire dataset
+        # model_fnr = hints.logical_not().sum().item() / hints.size(0)
+
+        # fpr = model_fnr * filter_fpr + model_tnr * filter_fpr
+        # fpr = (1 - model_tnr) * filter_fpr + model_tnr * filter_fpr
+        filter_fpr = fpr / (tnr + fpr)
+        print(f"{fpr=}, {tnr=}, {filter_fpr=}")
+        self.fn_filter = NaorEylonFilter(fn, filter_fpr, fn_filter_key)
+        self.tp_filter = NaorEylonFilter(tp, filter_fpr, tp_filter_key)
+
+        assert self.fn_filter.batched_contains(fn).sum() == fn.size(0)
+        assert self.tp_filter.batched_contains(tp).sum() == tp.size(0)
+
+        # must always store all positives
+        # required size
+        #
 
     def batched_contains(self, items: Tensor) -> Tensor:
         hints = self.batched_hints(items)
@@ -106,6 +95,8 @@ class DowntownBodegaFilter:
 
     def batched_hints(self, items: Tensor) -> Tensor:
         items = items.cuda()
+        with torch.no_grad():
+            return predict(self.model, items, self.batch_size) > self.threshold
         with torch.no_grad():
             self.model.eval()
             hints = torch.zeros(items.size(0), device=items.device)
@@ -144,69 +135,58 @@ def main(cfg):
     model = model.cuda()
     model.eval()
 
-    dataset = URLDataset.from_csv(cfg["test_path"], cfg["seq_len"])
+    dataset = LabeledURLDataset.from_csv(cfg["test_path"], cfg["seq_len"])
     threshold = find_threshold(
         model,
         dataset,
         cfg["fpr"],
         cfg["batch_size"],
-        cfg["num_workers"],
+        verbose=True,
     )
-    print("threshold =", threshold)
+    _, fpr, tnr, _ = test(
+        model, dataset, cfg["batch_size"], threshold, num_workers=8, verbose=True
+    )
+
+    neg_x = dataset.X[dataset.y < 0.01]
+    pos_x = dataset.X[dataset.y > 0.99]
 
     fp_key = b'B\xae\x1a\xc2\xbf\x8e\xb3\x94w\xdab\x8b"}/\xb5\x93Hrg \xedY\x9b5\xce\x85\xc7u#7\xb3'
     tp_key = b"JS\xf8\xed!\xc4\x84\xc7z\x0f\xad+k\x94\xe3E\xe8xG\xea\x1bRu\xa7\xe0\xd2d\xf8C\xf3\x0c\xad"
+
     filter = DowntownBodegaFilter(
-        dataset.X[dataset.y > 0.99],
-        cfg["fpr"],
+        pos_x,
+        fpr,
+        tnr,
         model,
         threshold,
         cfg["batch_size"],
         fp_key,
         tp_key,
     )
-    print(filter.size_in_bytes())
+    ne_filter = NaorEylonFilter(pos_x, cfg["fpr"], key=fp_key)
 
-    dbf_correct = 0
-    dbf_total = 0
-    dbf_p = 0
-    fn_correct = 0
-    fn_total = 0
-    fn_p = 0
-    tp_correct = 0
-    tp_total = 0
-    tp_p = 0
-    for i in range(0, len(dataset.X), 1024):
-        x = dataset.X[i : i + 1024]
-        y = dataset.y[i : i + 1024] > 0.99
+    filter_fp = 0
+    tp_filter_fp = 0
+    fn_filter_fp = 0
+    ne_filter_fp = 0
 
-        hints = filter.batched_hints(x).cpu()
-        px = x[hints]
-        py = y[hints]
-        nx = x[~hints]
-        ny = y[~hints]
+    for i in range(0, len(neg_x), 1024):
+        x = neg_x[i : i + 1024]
 
-        dbf_correct += torch.sum(filter.batched_contains(x) == y)
-        dbf_p += y.sum()
-        dbf_total += len(x)
+        filter_fp += filter.batched_contains(x).sum().item()
+        tp_filter_fp += filter.tp_filter.batched_contains(x).sum().item()
+        fn_filter_fp += filter.fn_filter.batched_contains(x).sum().item()
+        ne_filter_fp += ne_filter.batched_contains(x).sum().item()
 
-        fn_correct += torch.sum(filter.fn_filter.batched_contains(nx) == ny)
-        fn_p += ny.sum()
-        fn_total += len(nx)
+    filter_fpr = filter_fp / neg_x.size(0)
+    tp_filter_fpr = tp_filter_fp / neg_x.size(0)
+    fn_filter_fpr = fn_filter_fp / neg_x.size(0)
+    ne_filter_fpr = ne_filter_fp / neg_x.size(0)
 
-        tp_correct += torch.sum(filter.tp_filter.batched_contains(px) == py)
-        tp_p += py.sum()
-        tp_total += len(px)
-
-    print(
-        f"DBF FPR: 1 - {dbf_correct}/{dbf_total} = {1 - dbf_correct / dbf_total}, Positive: {dbf_p}/{dbf_total}"
-    )
-    print(
-        f"FN FPR: 1 - {fn_correct}/{fn_total} = {1 - fn_correct / fn_total}, Positive: {fn_p}/{fn_total}, Size: {filter.fn_filter.filter.approx_items}, Bits: {filter.fn_filter.filter.size_in_bits}"
-    )
-    print(
-        f"TP FPR: 1 - {tp_correct}/{tp_total} = {1 - tp_correct / tp_total}, Positive: {tp_p}/{tp_total}, Size: {filter.tp_filter.filter.approx_items}, Bits: {filter.tp_filter.filter.size_in_bits}"
-    )
+    print(f"{filter_fpr=}")
+    print(f"{tp_filter_fpr=}")
+    print(f"{fn_filter_fpr=}")
+    print(f"{ne_filter_fpr=}")
 
 
 if __name__ == "__main__":

@@ -3,8 +3,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.nn import functional as F
 from pathlib import Path
+from torch import Tensor
 from torch.utils.data import DataLoader
-from data import URLDataset
+from data import URLDataset, LabeledURLDataset
 from model import URLClassifer
 from tqdm import tqdm
 
@@ -21,6 +22,7 @@ def train(
     learning_rate: float,
     threshold: float,
     num_workers: int,
+    verbose: bool = False,
 ) -> URLClassifer:
     model.train()
 
@@ -42,7 +44,9 @@ def train(
         tn = torch.tensor(0.0, device=device)
         fn = torch.tensor(0.0, device=device)
 
-        for _, x, y in tqdm(loader, desc=f"Epoch [{epoch + 1}/{epochs}]"):
+        for x, y in tqdm(
+            loader, desc=f"Epoch [{epoch + 1}/{epochs}]", disable=not verbose
+        ):
             x, y = (
                 x.to(device, non_blocking=True),
                 y.to(device, non_blocking=True),
@@ -74,18 +78,18 @@ def train(
         tn = tn.item()
         fn = fn.item()
 
-        count = tp + fp + tn + fn
-        tpr = tp / count
-        fpr = fp / count
-        tnr = tn / count
-        fnr = fn / count
-        acc = tpr + tnr
+        tpr = tp / (tp + fn)
+        fpr = fp / (tn + fp)
+        tnr = tn / (tn + fp)
+        fnr = fn / (tp + fn)
+        acc = (tn + tp) / (tp + fp + tn + fn)
 
-        print(f"Epoch [{epoch + 1}/{epochs}]: acc = {100 * acc:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}]: tpr = {100 * tpr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}]: fpr = {100 * fpr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}]: tnr = {100 * tnr:.2f}%")
-        print(f"Epoch [{epoch + 1}/{epochs}]: fnr = {100 * fnr:.2f}%")
+        if verbose:
+            print(f"Epoch [{epoch + 1}/{epochs}]: acc = {100 * acc:.2f}%")
+            print(f"Epoch [{epoch + 1}/{epochs}]: tpr = {100 * tpr:.2f}%")
+            print(f"Epoch [{epoch + 1}/{epochs}]: fpr = {100 * fpr:.2f}%")
+            print(f"Epoch [{epoch + 1}/{epochs}]: tnr = {100 * tnr:.2f}%")
+            print(f"Epoch [{epoch + 1}/{epochs}]: fnr = {100 * fnr:.2f}%")
 
     return model
 
@@ -97,6 +101,7 @@ def test(
     batch_size: int,
     threshold: float,
     num_workers: int,
+    verbose: bool = False,
 ) -> tuple[float, float, float, float]:
     model.eval()
 
@@ -111,7 +116,7 @@ def test(
     tn = torch.tensor(0.0, device=device)
     fn = torch.tensor(0.0, device=device)
 
-    for _, x, y in tqdm(loader, desc="Test [1/1]"):
+    for x, y in tqdm(loader, desc="Test [1/1]", disable=not verbose):
         x, y = (
             x.to(device, non_blocking=True),
             y.to(device, non_blocking=True),
@@ -136,20 +141,88 @@ def test(
     tn = tn.item()
     fn = fn.item()
 
-    count = tp + fp + tn + fn
-    tpr = tp / count
-    fpr = fp / count
-    tnr = tn / count
-    fnr = fn / count
-    acc = tpr + tnr
+    tpr = tp / (tp + fn)
+    fpr = fp / (tn + fp)
+    tnr = tn / (tn + fp)
+    fnr = fn / (tp + fn)
+    acc = (tn + tp) / (tp + fp + tn + fn)
 
-    print(f"Test [1/1]: acc = {100 * acc:.2f}%")
-    print(f"Test [1/1]: tpr = {100 * tpr:.2f}%")
-    print(f"Test [1/1]: fpr = {100 * fpr:.2f}%")
-    print(f"Test [1/1]: tnr = {100 * tnr:.2f}%")
-    print(f"Test [1/1]: fnr = {100 * fnr:.2f}%")
+    if verbose:
+        print(f"Test [1/1]: acc = {100 * acc:.2f}%")
+        print(f"Test [1/1]: tpr = {100 * tpr:.2f}%")
+        print(f"Test [1/1]: fpr = {100 * fpr:.2f}%")
+        print(f"Test [1/1]: tnr = {100 * tnr:.2f}%")
+        print(f"Test [1/1]: fnr = {100 * fnr:.2f}%")
 
     return tpr, fpr, tnr, fnr
+
+
+def predict(
+    model: URLClassifer,
+    items: Tensor,
+    batch_size: int,
+    verbose: bool = False,
+) -> Tensor:
+    model.eval()
+
+    result = torch.zeros(items.size(0), device=device, dtype=torch.float)
+
+    for i in tqdm(
+        range(0, items.size(0), batch_size), desc="Predict [1/1]", disable=not verbose
+    ):
+        x = items[i : i + batch_size].to(device, non_blocking=True)
+
+        with torch.autocast("cuda", torch.float16):
+            pred_y = F.sigmoid(model(x))
+
+        result[i : i + batch_size] = pred_y
+
+    return result
+
+
+@torch.no_grad()
+def find_threshold(
+    model: URLClassifer,
+    dataset: URLDataset,
+    fpr: float,
+    batch_size: int,
+    iterations: int = 16,
+    verbose: bool = False,
+) -> float:
+    left = 0.0
+    right = 1.0
+
+    neg = dataset.y < 0.01
+    X = dataset.X[neg]
+    y = dataset.y[neg] > 0.99
+
+    pred_y = predict(model, X, batch_size, verbose=verbose).cpu()
+
+    for i in range(iterations):
+        mid = (left + right) / 2
+
+        p = y
+        n = ~p
+        pred_p = pred_y > mid
+        pred_n = ~pred_p
+
+        fp = (n & pred_p).sum()
+        tn = (n & pred_n).sum()
+
+        test_fpr = torch.sum((pred_y > mid) != y).item() / y.size(0)
+
+        if verbose:
+            print(
+                f"Find [{i + 1}/{iterations}] test_fpr = {test_fpr}, {fp / y.size(0)}"
+            )
+            print(f"Find [{i + 1}/{iterations}] threshold = {mid}")
+
+        if test_fpr > fpr:
+            left = mid
+        else:
+            right = mid
+
+    return (left + right) / 2
 
 
 def main(cfg: dict) -> None:
@@ -164,7 +237,9 @@ def main(cfg: dict) -> None:
     print(f"Model [1/1]: size = {model.size_in_bytes()}B")
     print(f"Model [1/1]: size = {model.size_in_bytes() / 1_000_000:.4f}MB")
 
-    train_dataset = URLDataset.from_csv(Path(cfg["train_path"]), seq_len=cfg["seq_len"])
+    train_dataset = LabeledURLDataset.from_csv(
+        Path(cfg["train_path"]), seq_len=cfg["seq_len"]
+    )
     model = train(
         model,
         train_dataset,
@@ -173,15 +248,19 @@ def main(cfg: dict) -> None:
         learning_rate=cfg["learning_rate"],
         threshold=cfg["threshold"],
         num_workers=cfg["num_workers"],
+        verbose=True,
     )
 
-    test_dataset = URLDataset.from_csv(Path(cfg["test_path"]), seq_len=cfg["seq_len"])
+    test_dataset = LabeledURLDataset.from_csv(
+        Path(cfg["test_path"]), seq_len=cfg["seq_len"]
+    )
     test(
         model,
         test_dataset,
         batch_size=cfg["batch_size"],
         threshold=cfg["threshold"],
         num_workers=cfg["num_workers"],
+        verbose=True,
     )
 
     model = model.cpu()
@@ -203,7 +282,7 @@ if __name__ == "__main__":
         "threshold": 0.5,
         "model_path": "models/transformer.pt",
         # Training.
-        "epochs": 1,
+        "epochs": 10,
         "batch_size": 1024,
         "learning_rate": 0.0001,
     }
