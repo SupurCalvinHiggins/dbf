@@ -67,19 +67,15 @@ class LabeledURLDataset(URLDataset):
 
 
 class FilteredURLDataset(URLDataset):
-    def __init__(
-        self, filter, threshold: float, batch_size: int, count: int, seq_len: int
-    ):
+    def __init__(self, filter, count: int, seq_len: int):
         self.filter = filter
-        self.threshold = threshold
-        self.batch_size = batch_size
         self.count = count
         self.seq_len = seq_len
         self.reset()
 
     def reset(self):
         self._X = torch.randint(0, 256, (self.count, self.seq_len))
-        self._y = self.filter.batched_contains(self.X)
+        self._y = self.filter.batched_contains(self.X).to(dtype=torch.float)
 
     def __getitem__(self, index: int) -> tuple[Tensor, Tensor]:
         return self._X[index], self._y[index]

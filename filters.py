@@ -7,8 +7,8 @@ import torch
 from torch import Tensor
 from model import URLClassifer
 from blake3 import blake3
-from data import LabeledURLDataset
-from train import find_threshold, test, predict
+from train import predict
+from typing import Optional
 
 
 class Filter(ABC):
@@ -17,6 +17,31 @@ class Filter(ABC):
 
     @abstractmethod
     def size_in_bytes(self) -> int: ...
+
+
+def hash_item(item: Tensor, key: Optional[bytes] = None) -> int:
+    data = item.cpu().numpy().tobytes()
+    return int.from_bytes(blake3(data, key=key).digest()[:16], signed=True)
+
+
+class HashSetFilter(Filter):
+    def __init__(self, items: Tensor) -> None:
+        self.hashes = set([self.hash(item) for item in items])
+
+    def hash(self, item: Tensor) -> int:
+        return hash_item(item)
+
+    def batched_add(self, items: Tensor) -> None:
+        for item in items:
+            self.hashes.add(self.hash(item))
+
+    def batched_contains(self, items: Tensor) -> Tensor:
+        return torch.tensor(
+            [self.hash(item) in self.hashes for item in items], dtype=torch.bool
+        )
+
+    def size_in_bytes(self) -> int:
+        raise NotImplementedError
 
 
 class NaorEylonFilter(Filter):
@@ -30,8 +55,7 @@ class NaorEylonFilter(Filter):
             self.filter.add(item)
 
     def hash(self, item: Tensor) -> int:
-        data = item.cpu().numpy().tobytes()
-        return int.from_bytes(blake3(data, key=self.key).digest()[:16], signed=True)
+        return hash_item(item, self.key)
 
     def batched_contains(self, items: Tensor) -> Tensor:
         return torch.tensor([item in self.filter for item in items], dtype=torch.bool)
@@ -91,96 +115,3 @@ class DowntownBodegaFilter(Filter):
             + self.tp_filter.size_in_bytes()
             + self.fn_filter.size_in_bytes()
         )
-
-
-def main(cfg):
-    model = URLClassifer(
-        hidden_dim=cfg["hidden_dim"],
-        num_heads=cfg["num_heads"],
-        num_layers=cfg["num_layers"],
-        seq_len=cfg["seq_len"],
-        dropout=0.0,
-    )
-    model.load_state_dict(torch.load(cfg["model_path"]))
-    model = model.cuda()
-    torch.compile(model, mode="max-autotune")
-    model.eval()
-
-    dataset = LabeledURLDataset.from_csv(cfg["test_path"], cfg["seq_len"])
-    threshold = find_threshold(
-        model,
-        dataset,
-        cfg["fpr"],
-        cfg["batch_size"],
-        verbose=True,
-    )
-    tpr, fpr, _, _ = test(
-        model, dataset, cfg["batch_size"], threshold, num_workers=8, verbose=True
-    )
-
-    neg_x = dataset.X[dataset.y < 0.01]
-    pos_x = dataset.X[dataset.y > 0.99]
-
-    fp_key = b'B\xae\x1a\xc2\xbf\x8e\xb3\x94w\xdab\x8b"}/\xb5\x93Hrg \xedY\x9b5\xce\x85\xc7u#7\xb3'
-    tp_key = b"JS\xf8\xed!\xc4\x84\xc7z\x0f\xad+k\x94\xe3E\xe8xG\xea\x1bRu\xa7\xe0\xd2d\xf8C\xf3\x0c\xad"
-
-    filter = DowntownBodegaFilter(
-        pos_x,
-        fpr,
-        tpr,
-        model,
-        threshold,
-        cfg["batch_size"],
-        fp_key,
-        tp_key,
-    )
-    ne_filter = NaorEylonFilter(pos_x, cfg["fpr"], key=fp_key)
-
-    filter_fp = 0
-    tp_filter_fp = 0
-    fn_filter_fp = 0
-    ne_filter_fp = 0
-
-    for i in range(0, len(neg_x), 1024):
-        x = neg_x[i : i + 1024]
-
-        filter_fp += filter.batched_contains(x).sum().item()
-        tp_filter_fp += filter.tp_filter.batched_contains(x).sum().item()
-        fn_filter_fp += filter.fn_filter.batched_contains(x).sum().item()
-        ne_filter_fp += ne_filter.batched_contains(x).sum().item()
-
-    filter_fpr = filter_fp / neg_x.size(0)
-    tp_filter_fpr = tp_filter_fp / neg_x.size(0)
-    fn_filter_fpr = fn_filter_fp / neg_x.size(0)
-    ne_filter_fpr = ne_filter_fp / neg_x.size(0)
-
-    print(f"{filter_fpr=}")
-    print(f"{tp_filter_fpr=}")
-    print(f"{fn_filter_fpr=}")
-    print(f"{ne_filter_fpr=}")
-
-    print(f"{filter.size_in_bytes()=}")
-    print(f"{filter.tp_filter.size_in_bytes()=}")
-    print(f"{filter.fn_filter.size_in_bytes()=}")
-    print(f"{ne_filter.size_in_bytes()=}")
-
-
-if __name__ == "__main__":
-    cfg = {
-        # Dataset.
-        "test_path": "data/data.csv",
-        "seq_len": 128,
-        "num_workers": 1,
-        # Model.
-        "hidden_dim": 8,
-        "num_heads": 4,
-        "num_layers": 1,
-        "dropout": 0.1,
-        "threshold": 0.5,
-        "model_path": "models/transformer.pt",
-        # Testing.
-        "batch_size": 1024,
-        # Filter.
-        "fpr": 0.05,
-    }
-    main(cfg)

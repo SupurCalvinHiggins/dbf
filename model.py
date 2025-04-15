@@ -28,8 +28,11 @@ class URLClassifer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.fc = nn.Linear(hidden_dim, 1)
 
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.embedding(x) + self.positional_encoding[:, : x.size(1), :]
+    def forward(self, x: Tensor, embed: bool = True) -> Tensor:
+        size = x.size(1)
+        if embed:
+            x = self.embedding(x)
+        x = x + self.positional_encoding[:, :size, :]
         x = self.transformer(x)
         x = x[:, 0]
         x = self.fc(x).flatten()

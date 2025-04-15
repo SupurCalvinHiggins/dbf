@@ -1,13 +1,16 @@
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn import functional as F
+import numpy as np
 from pathlib import Path
 from torch import Tensor
 from torch.utils.data import DataLoader
 from data import URLDataset, LabeledURLDataset
 from model import URLClassifer
 from tqdm import tqdm
+from typing import Optional, Callable
 
 
 device = torch.device("cuda")
@@ -23,6 +26,7 @@ def train(
     threshold: float,
     num_workers: int,
     verbose: bool = False,
+    on_epoch_end: Optional[Callable[[], None]] = None,
 ) -> URLClassifer:
     model.train()
 
@@ -34,7 +38,10 @@ def train(
         num_workers=num_workers,
     )
 
-    criteron = nn.BCEWithLogitsLoss()
+    pr = dataset.y.sum() / dataset.y.size(0)
+    pos_weight = torch.tensor([(1 - pr) / pr], device=device)
+    criteron = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, fused=True)
     scaler = torch.amp.GradScaler("cuda")
 
@@ -72,6 +79,9 @@ def train(
             fp += (n & pred_p).sum()
             tn += (n & pred_n).sum()
             fn += (p & pred_n).sum()
+
+        if on_epoch_end is not None:
+            on_epoch_end()
 
         tp = tp.item()
         fp = fp.item()
@@ -225,7 +235,59 @@ def find_threshold(
     return (left + right) / 2
 
 
+@torch.enable_grad()
+def attack(
+    model: URLClassifer,
+    items: Tensor,
+    epochs: int,
+    batch_size: int,
+    learning_rate: float,
+    verbose: bool = True,
+) -> Tensor:
+    model.eval()
+    for param in model.parameters():
+        param.requires_grad = False
+
+    x = nn.Parameter(model.embedding(items.clone().to(device)))
+    y = torch.zeros((items.size(0),), dtype=torch.float, device=device)
+
+    criteron = nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam([x], lr=learning_rate, fused=True)
+
+    for epoch in range(epochs):
+        total_loss = torch.tensor(0.0, device=device)
+
+        for i in tqdm(
+            range(0, len(x), batch_size),
+            desc=f"Attack [{epoch + 1}/{epochs}]",
+            disable=not verbose,
+        ):
+            optimizer.zero_grad(set_to_none=True)
+
+            pred_y = model(x[i : i + batch_size], embed=False)
+            loss = criteron(pred_y, y[i : i + batch_size])
+            loss.backward()
+
+            optimizer.step()
+
+            total_loss += loss
+
+        if verbose:
+            print(f"Attack [{epoch + 1}/{epochs}] loss = {total_loss.item()}")
+
+    normed_x = F.normalize(x, p=2, dim=-1)
+    normed_w = F.normalize(model.embedding.weight, p=2, dim=-1)
+    cos_sim = normed_x @ normed_w.T
+    x = torch.argmax(cos_sim, dim=-1)
+
+    return x
+
+
 def main(cfg: dict) -> None:
+    torch.manual_seed(cfg["seed"])
+    np.random.seed(cfg["seed"])
+    random.seed(cfg["seed"])
+
     model = URLClassifer(
         cfg["hidden_dim"],
         cfg["num_heads"],
@@ -264,11 +326,13 @@ def main(cfg: dict) -> None:
     )
 
     model = model.cpu()
-    torch.save(model.state_dict(), cfg["model_path"])
+    torch.save(model, cfg["model_path"])
 
 
 if __name__ == "__main__":
     cfg = {
+        # Seed.
+        "seed": 42,
         # Dataset.
         "train_path": "data/train.csv",
         "test_path": "data/test.csv",
@@ -280,7 +344,7 @@ if __name__ == "__main__":
         "num_layers": 1,
         "dropout": 0.1,
         "threshold": 0.5,
-        "model_path": "models/transformer.pt",
+        "model_path": "models/db_filter_model.pt",
         # Training.
         "epochs": 10,
         "batch_size": 1024,
