@@ -11,6 +11,7 @@ This repository includes implementations of
 1. The Downtown Bodega filter data structure
 2. An optimal Downtown Bodega filter parameter tuning algorithm
 3. Three adaptive attacks against the Downtown Bodega filter
+
 for my machine learning security final project (CSC 592).
 
 # Installation
