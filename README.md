@@ -23,7 +23,7 @@ Installation is easy(!) because of the **amazing** `uv` package manager.
 
 ## System Requirements
 
-The code was tested on Linux with a V100 GPU. Performance might be poor if the GPU does not support AMP.
+The code was tested on Linux with a V100 GPU. Performance might be poor if the GPU does not have Tensor Cores.
 
 # Quick Start
 
