@@ -1,0 +1,133 @@
+\documentclass{article}
+\usepackage{amssymb}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{float}
+\usepackage{biblatex}
+
+\bibliography{ref.bib}
+
+\title{Downtown Bodega Filter Tuning Guide}
+\author{Calvin Higgins}
+\date{February 2025}
+
+\begin{document}
+
+\maketitle
+
+\section{Background}
+
+Downtown Bodega filters (DBFs) \cite{bishop_tirmazi_2025} are a secure alternative to Learned Bloom filters (LBFs) \cite{kraska_beutel_chi_dean_polyzotis_2018}. Both data structures require tuning several parameters including a decision threshold $\tau$ and backup filter false positive rate(s) to attain the desired false positive rate $\epsilon$. Parameter tuning also impacts the filter's memory footprint and, for DBFs, worst-case false positive rate. Tuning procedures for LBFs do not directly translate to DBFs, as they do not balance the tradeoff between expected and worst-case false positive rates. To be practical, DBFs must have a lower expected false positive rate than Naor-Eylon filters \cite{naor_eylon_2019}, an alternative secure Bloom filter variant, and reasonable worst-case false positive rate.
+
+\section{Problem Statement}
+
+Given a desired expected false positive rate $\epsilon$ and maximum false positive rate $\epsilon_\text{max}$, we wish to choose the decision threshold $\tau$, true positive filter false positive rate $\text{TP}_\text{FPR}$, and false negative filter false positive rate $\text{FN}_\text{FPR}$ such that the resulting Downtown Bodega filter (DBF) has minimal size in bits $m$.
+
+\section{Results}
+
+We give a linear time vectorizable algorithm to compute the optimal decision threshold $\tau$. First, we compute the optimal backup filter false positive rates, and then optimize the choice of $\tau$ with dynamic programming. 
+
+\subsection{Backup Filter False Positive Rates}
+\label{section:backup_filter}
+
+We consider the problem of choosing optimal backup filter false positive rates $\text{TP}_\text{FPR}$ and $\text{FN}_\text{FPR}$, given a learned model with false positive rate $\text{M}_\text{FPR}$. \\
+
+\noindent
+From Theorem 8 in \cite{bishop_tirmazi_2025}, we have that 
+\begin{align}
+    \label{eq:1}
+    \epsilon = \text{M}_\text{FPR} \text{TP}_\text{FPR} + \text{M}_\text{TNR} \text{FN}_\text{FPR} 
+\end{align}
+and the total size of the DBF is given by 
+\begin{align}
+    \label{eq:2}
+    m = - \frac{n}{\ln(2)^2}\left( \text{M}_\text{TPR} \ln(\text{TP}_\text{FPR}) + \text{M}_\text{FNR} \ln(\text{FN}_\text{FPR})  \right) + \text{M}_m
+\end{align}
+where $n$ is the size of the underlying set and $\text{M}_m$ is the memory consumption of the learned model in bits. Manipulating (\ref{eq:1}), we find that
+\begin{align}
+    \label{eq:3}
+    \text{FN}_\text{FPR} = \frac{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}{\text{M}_\text{TNR}} 
+\end{align}
+so 
+\begin{align}
+    m = - \frac{n}{\ln(2)^2}\left( \text{M}_\text{TPR} \ln(\text{TP}_\text{FPR}) + \text{M}_\text{FNR} \ln\left(\frac{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}{\text{M}_\text{TNR}} \right)  \right) + \text{M}_m
+\end{align}
+by plugging into (\ref{eq:2}). \\
+
+\noindent
+We wish to minimize $m$ by choosing $\text{TP}_\text{FPR}$, so we differentiate $m$ with respect to $\text{TP}_\text{FPR}$.
+\begin{align}
+    \frac{\partial m}{\partial \text{TP}_\text{FPR}} 
+    &= -\frac{n}{\ln(2)^2}\left( \frac{\partial}{\partial \text{TP}_\text{FPR}} \text{M}_\text{TPR} \ln(\text{TP}_\text{FPR})
+        + \frac{\partial}{\partial \text{TP}_\text{FPR}} \text{M}_\text{FNR} \ln\left(\frac{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}{\text{M}_\text{TNR}} \right) \right) \\
+    &= - \frac{n}{\ln(2)^2} \left( \frac{\text{M}_\text{TPR}} {\text{TP}_\text{FPR}} + \frac{\text{M}_\text{FNR}}{\frac{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}{\text{M}_\text{TNR}}} \cdot \frac{\text{M}_\text{FPR}}{\text{M}_\text{TNR}} \right) \\
+    &= - \frac{n}{\ln(2)^2} \left( \frac{\text{M}_\text{TPR}} {\text{TP}_\text{FPR}} + \frac{\text{M}_\text{FNR}\text{M}_\text{FPR}}{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}\right) \\
+\end{align}
+
+\noindent
+Then we set to zero and solve
+\begin{align}
+    - \frac{n}{\ln(2)^2} \left( \frac{\text{M}_\text{TPR}} {\text{TP}_\text{FPR}} + \frac{\text{M}_\text{FNR}\text{M}_\text{FPR}}{\epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR}}\right) &= 0 \\
+    -\text{M}_\text{TPR}\left( \epsilon - \text{M}_\text{FPR} \text{TP}_\text{FPR} \right) - \text{TP}_\text{FPR}\text{M}_\text{FNR}\text{M}_\text{FPR} &= 0 \\
+    (\text{M}_\text{TPR} - \text{M}_\text{FNR}) \text{M}_\text{FPR} \text{TP}_\text{FPR} &= \epsilon\text{M}_\text{TPR} \\
+    \text{M}_\text{FPR} \text{TP}_\text{FPR} &= \epsilon\text{M}_\text{TPR} \\
+    \label{eq:13}
+    \text{TP}_\text{FPR} &= \epsilon\frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}}
+\end{align}
+
+\noindent
+Substituting into (\ref{eq:3}), we find that
+\begin{align}
+    \label{eq:14}
+    \text{FN}_\text{FPR} = \epsilon \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}} 
+\end{align}
+
+\subsection{Learned Model False Positive Rate}
+
+In Section \ref{section:backup_filter}, we found the optimal backup filter false positive rates given a fixed decision threshold $\tau$. Now we consider the problem of choosing the optimal decision threshold. \\
+
+\noindent
+Plugging (\ref{eq:13}) and (\ref{eq:14}) into (\ref{eq:2}), we find that
+\begin{align}
+    m &= - \frac{n}{\ln(2)^2}\left( \text{M}_\text{TPR} \ln \left( \epsilon\frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}} \right) + \text{M}_\text{FNR} \ln \left( \epsilon \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}} \right)  \right) + \text{M}_m \\
+    &= - \frac{n}{\ln(2)^2}\left( \text{M}_\text{TPR} \ln \left( \frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}} \right) 
+    + \text{M}_\text{TPR} \ln(\epsilon) + \text{M}_\text{FNR} \ln \left( \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}}\right)  + \text{M}_\text{FNR} \ln(\epsilon)   \right) + \text{M}_m \\
+    &= - \frac{n}{\ln(2)^2}\left( \text{M}_\text{TPR} \ln \left( \frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}} \right) 
+ + \text{M}_\text{FNR} \ln \left( \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}}\right) + \ln(\epsilon)   \right) + \text{M}_m
+\end{align}
+
+\noindent
+Dropping constants and constant factors, we get the following cost function
+\begin{align*}
+    C(\tau) &= -\text{M}_\text{TPR} \ln \left( \frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}} \right) 
+ - \text{M}_\text{FNR} \ln \left( \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}}\right)
+\end{align*}
+which we can optimize with dynamic programming in $\Theta(n)$ time. We can restrict the choice of $\tau$ such that 
+\begin{align}
+    \max\left\{\epsilon\frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}}, \epsilon \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}} \right\} \leq \epsilon_\text{max}
+\end{align}
+and the resulting DBF will have worst-case false positive rate $\epsilon_\text{max}$. \\
+
+\noindent
+Here is one sample procedure to optimize the cost function.
+\begin{enumerate}
+    \item Sort the learned model confidence scores $A$ on the training set from least to greatest.
+    \item For each index $i$,
+    \begin{enumerate}
+        \item Compute the number of elements with negative class in $A[:i]$ and with positive class in $A[i:]$ with a rolling sum. 
+        \item Compute the false/true negative/positive rates of the model given that $A[:i]$ is classified as negative and $A[i:]$ is classified as positive.
+        \item Verify that the optimal backup filter false positive rates are less than $\epsilon_\text{max}$.
+        \item Track the index with the lowest cost $i^*$.
+    \end{enumerate}
+    \item Output the average between $A[i^* - 1]$ and $A[i^*]$.
+\end{enumerate}
+
+\section{Future Work}
+
+Rather than outright rejecting decision thresholds $\tau$, where the worst-case false positive rate is greater than $\epsilon_\text{max}$, it might be possible to compute optimal backup filter false positive rates that obey this constraint. It might also be possible to derive optimal parameter values given a fixed memory budget and maximum false positive rate. 
+
+\printbibliography
+
+\end{document}
