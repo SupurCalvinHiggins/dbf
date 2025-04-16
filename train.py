@@ -1,4 +1,5 @@
 import random
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -194,45 +195,59 @@ def predict(
 def find_threshold(
     model: URLClassifer,
     dataset: URLDataset,
-    fpr: float,
     batch_size: int,
-    iterations: int = 16,
+    filter_fpr: float,
+    max_filter_fpr: float,
     verbose: bool = False,
 ) -> float:
-    left = 0.0
-    right = 1.0
+    y = dataset.y
+    pred_y = predict(model, dataset.X, batch_size, verbose=verbose).cpu()
 
-    neg = dataset.y < 0.01
-    X = dataset.X[neg]
-    y = dataset.y[neg] > 0.99
+    idx = torch.argsort(pred_y)
+    y = y[idx]
+    pred_y = pred_y[idx]
 
-    pred_y = predict(model, X, batch_size, verbose=verbose).cpu()
+    p_mask = y > 0.99
+    n_mask = y < 0.01
 
-    for i in range(iterations):
-        mid = (left + right) / 2
+    # n_count[i] is the number of negative examples in y[:i+1]
+    n_count = torch.cumsum(n_mask, dim=-1)
 
-        p = y
-        n = ~p
-        pred_p = pred_y > mid
-        pred_n = ~pred_p
+    # p_count[i] is the number of postive examples in y[i+1:]
+    p_count = torch.sum(p_mask) - torch.cumsum(p_mask, dim=-1)
 
-        fp = (n & pred_p).sum()
-        tn = (n & pred_n).sum()
+    # TODO: vectorize.
+    n = len(y)
+    best_cost, best_i = float("inf"), 0
+    for i in tqdm(range(1, n - 1), disable=not verbose):
+        tpr = p_count[i - 1] / p_count[0]
+        fnr = 1 - tpr
+        tnr = n_count[i - 1] / n_count[-1]
+        fpr = 1 - tnr
 
-        test_fpr = torch.sum((pred_y > mid) != y).item() / y.size(0)
+        if (
+            math.isclose(tpr, 0.0)
+            or math.isclose(fnr, 0.0)
+            or math.isclose(tnr, 0.0)
+            or math.isclose(fpr, 0.0)
+        ):
+            continue
 
-        if verbose:
-            print(
-                f"Find [{i + 1}/{iterations}] test_fpr = {test_fpr}, {fp / y.size(0)}"
-            )
-            print(f"Find [{i + 1}/{iterations}] threshold = {mid}")
+        cost = -tpr * math.log(tpr / fpr) - fnr * math.log(fnr / tnr)
+        max_fpr = max((tpr / fpr).item(), (fnr / tnr).item()) * filter_fpr
+        if cost < best_cost and max_fpr < max_filter_fpr:
+            best_cost = cost
+            best_i = i
 
-        if test_fpr > fpr:
-            left = mid
-        else:
-            right = mid
+    assert best_cost < float("inf")
 
-    return (left + right) / 2
+    threshold = ((pred_y[best_i] + pred_y[best_i + 1]) / 2).item()
+
+    if verbose:
+        print(f"Find [1/1]: best_cost = {best_cost}")
+        print(f"Find [1/1]: threshold = {threshold}")
+
+    return threshold
 
 
 @torch.enable_grad()
@@ -249,7 +264,7 @@ def attack(
         param.requires_grad = False
 
     x = nn.Parameter(model.embedding(items.clone().to(device)))
-    y = torch.zeros((items.size(0),), dtype=torch.float, device=device)
+    y = torch.ones((items.size(0),), dtype=torch.float, device=device)
 
     criteron = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam([x], lr=learning_rate, fused=True)

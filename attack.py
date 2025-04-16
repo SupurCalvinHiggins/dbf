@@ -32,11 +32,12 @@ def main(cfg: dict) -> None:
     threshold = find_threshold(
         model=model,
         dataset=dataset,
-        fpr=cfg["filter"]["fpr"],
         batch_size=cfg["batch_size"],
+        filter_fpr=cfg["filter"]["fpr"],
+        max_filter_fpr=cfg["filter"]["max_fpr"],
         verbose=True,
     )
-    tpr, fpr, _, _ = test(
+    model_tpr, _, model_tnr, _ = test(
         model=model,
         dataset=dataset,
         batch_size=cfg["batch_size"],
@@ -49,8 +50,9 @@ def main(cfg: dict) -> None:
     # Build Downtown Dodega filter.
     db_filter = DowntownBodegaFilter(
         items=items,
-        fpr=fpr,
-        tpr=tpr,
+        filter_fpr=cfg["filter"]["fpr"],
+        model_tpr=model_tpr,
+        model_tnr=model_tnr,
         model=model,
         threshold=threshold,
         batch_size=cfg["batch_size"],
@@ -58,11 +60,18 @@ def main(cfg: dict) -> None:
         tp_filter_key=cfg["filter"]["tp_filter_key"],
     )
     assert db_filter.batched_contains(items).sum().item() == items.size(0)
-    db_actual_fpr = db_filter.batched_contains(not_items).sum().item() / not_items.size(
-        0
+    db_emprical_fpr = db_filter.batched_contains(
+        not_items
+    ).sum().item() / not_items.size(0)
+    print(f"DBF: requested expected fpr = {100 * cfg['filter']['fpr']:.2f}%")
+    print(f"DBF: theoretical expected fpr = {100 * db_filter.fpr:.2f}%")
+    print(f"DBF: emprical expected fpr = {100 * db_emprical_fpr:.2f}%")
+    fn_filter_fpr = db_filter.fn_filter.fpr
+    tp_filter_fpr = db_filter.tp_filter.fpr
+    print(f"DBF: requested max fpr = {100 * cfg['filter']['max_fpr']:.2f}%")
+    print(
+        f"DBF: theoretical max fpr = max({100 * fn_filter_fpr:.2f}%, {100 * tp_filter_fpr:.2f}%) = {100 * max(fn_filter_fpr, tp_filter_fpr):.2f}%"
     )
-    print(f"DBF: actual fpr = {100 * db_actual_fpr:.2f}%")
-    print(f"DBF: expected fpr = {100 * cfg['filter']['fpr']:.2f}%")
     print(f"DBF: size = {db_filter.size_in_bytes() / 1_000_000:.4f}MB")
     print()
 
@@ -72,11 +81,12 @@ def main(cfg: dict) -> None:
         items=items, fpr=fpr, key=cfg["filter"]["ne_filter_key"]
     )
     assert ne_filter.batched_contains(items).sum().item() == items.size(0)
-    ne_actual_fpr = ne_filter.batched_contains(not_items).sum().item() / not_items.size(
-        0
-    )
-    print(f"NEF: actual_fpr = {100 * ne_actual_fpr:.2f}%")
-    print(f"NEF: expected_fpr = {100 * cfg['filter']['fpr']:.2f}%")
+    ne_emprical_fpr = ne_filter.batched_contains(
+        not_items
+    ).sum().item() / not_items.size(0)
+    print(f"NEF: requested max fpr = {100 * cfg['filter']['fpr']:.2f}%")
+    print(f"NEF: theoretical max fpr = {100 * ne_filter.fpr:.2f}%")
+    print(f"NEF: emprical max fpr = {100 * ne_emprical_fpr:.2f}%")
     print(f"NEF: size = {ne_filter.size_in_bytes() / 1_000_000:.4f}MB")
     print()
 
@@ -138,8 +148,8 @@ def main(cfg: dict) -> None:
     adv_items = adv_items[not_used_mask]
     rnd_preds = db_filter.batched_contains(rnd_items)
     adv_preds = db_filter.batched_contains(adv_items)
-    print(f"DBF: rnd_fpr = {rnd_preds.float().mean()}")
-    print(f"DBF: adv_fpr = {adv_preds.float().mean()}")
+    print(f"DBF: emprical rnd_fpr = {rnd_preds.float().mean()}")
+    print(f"DBF: emprical adv_fpr = {adv_preds.float().mean()}")
     rnd_preds_p = rnd_preds > 0.99
     rnd_preds_n = rnd_preds < 0.01
     adv_preds_p = adv_preds > 0.99
@@ -163,11 +173,11 @@ def main(cfg: dict) -> None:
     print(db_mcnemar_stat)
 
     hints = db_filter.batched_hints(rnd_items).cpu()
-    worst_case_fpr = max(
+    db_emprical_max_fpr = max(
         db_filter.batched_contains(rnd_items[hints]).float().mean().item(),
         db_filter.batched_contains(rnd_items[hints]).float().mean().item(),
     )
-    print(f"DBF: worst_case_fpr = {worst_case_fpr}")
+    print(f"DBF: emprical max fpr = {100 * db_emprical_max_fpr:.2f}")
 
 
 if __name__ == "__main__":
@@ -182,6 +192,7 @@ if __name__ == "__main__":
         # DB filter model.
         "filter": {
             "fpr": 0.05,
+            "max_fpr": 0.2,
             "model_path": "models/db_filter_model.pt",
             "fn_filter_key": b'B\xae\x1a\xc2\xbf\x8e\xb3\x94w\xdab\x8b"}/\xb5\x93Hrg \xedY\x9b5\xce\x85\xc7u#7\xb3',
             "tp_filter_key": b"JS\xf8\xed!\xc4\x84\xc7z\x0f\xad+k\x94\xe3E\xe8xG\xea\x1bRu\xa7\xe0\xd2d\xf8C\xf3\x0c\xad",
@@ -204,7 +215,7 @@ if __name__ == "__main__":
         },
         # Attack.
         "attack": {
-            "epochs": 40,
+            "epochs": 30,
             "samples": 16 * 1024,
             "learning_rate": 0.1,
         },

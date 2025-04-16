@@ -68,15 +68,16 @@ class DowntownBodegaFilter(Filter):
     def __init__(
         self,
         items: Tensor,
-        fpr: float,
-        tpr: float,
+        filter_fpr: float,
+        model_tpr: float,
+        model_tnr: float,
         model: URLClassifer,
         threshold: float,
         batch_size: int,
         fn_filter_key: bytes,
         tp_filter_key: bytes,
     ) -> None:
-        self.fpr = fpr
+        self.fpr = filter_fpr
         self.model = model
         self.threshold = threshold
         self.batch_size = batch_size
@@ -85,8 +86,10 @@ class DowntownBodegaFilter(Filter):
         fn = items[~hints]
         tp = items[hints]
 
-        tp_filter_fpr = 1 - tpr
-        fn_filter_fpr = tpr * fpr / (1 - fpr)
+        model_fnr = 1 - model_tpr
+        model_fpr = 1 - model_tnr
+        tp_filter_fpr = filter_fpr * (model_tpr / model_fpr)
+        fn_filter_fpr = filter_fpr * (model_fnr / model_tnr)
 
         self.fn_filter = NaorEylonFilter(fn, fn_filter_fpr, fn_filter_key)
         self.tp_filter = NaorEylonFilter(tp, tp_filter_fpr, tp_filter_key)
