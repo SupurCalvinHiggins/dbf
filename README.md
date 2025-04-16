@@ -31,7 +31,7 @@ View the results by running
 ```sh
 uv run attack.py
 ```
-Expect to wait around five minutes. If you need more speed, vectorize the parameter tuning algorithm and look into a GPU implementation of BLAKE3.
+Expect to wait around five minutes. If you need more speed, vectorize the parameter tuning algorithm and parallelize the BLAKE3 hashing.
 
 Optionally re-train the models by running
 ```sh
