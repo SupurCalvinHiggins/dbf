@@ -84,5 +84,7 @@ I split the URLs from the randomized attack into two sets based on the learned m
 # References
 
 [1] "Adversary Resilient Learned Bloom Filters" by Allison Bishop and Hayder Tirmazi.
+
 [2] "The Case for Learned Index Structures” by Tim Kraska et al.
+
 [3] "Bloom Filters in Adversarial Environments" by Moni Naor and Yogev Eylon.
