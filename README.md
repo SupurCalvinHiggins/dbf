@@ -31,6 +31,7 @@ View the results by running
 ```sh
 uv run attack.py
 ```
+Expect to wait around five minutes. If you need more speed, vectorize the parameter tuning algorithm and look into a GPU implementation of BLAKE3.
 
 Optionally re-train the models by running
 ```sh
@@ -53,7 +54,7 @@ The Downtown Bodega filter automatically selects optimal (lowest memory footprin
 
 ### Parameter Tuning
 
-The parameter tuning algorithm is explained in detail in `writing/tuning_guide.pdf`. In short, the algorithm finds the optimal parameters to minimize the DBF's memory footprint subject to expected and worst-case bounds on the DBF's false positive rate. The algorithm is easily __vectorizable__ but I haven't found the time to work through the full implementation.
+The parameter tuning algorithm is explained in detail in `writing/tuning_guide.pdf`. In short, the algorithm finds the optimal parameters to minimize the DBF's memory footprint subject to expected and worst-case bounds on the DBF's false positive rate. The algorithm is easily __vectorizable__ but I haven't found the time to work through the full implementation. 
 
 # Experiments
 
