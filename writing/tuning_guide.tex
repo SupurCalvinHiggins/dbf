@@ -27,7 +27,7 @@ Given a desired expected false positive rate $\epsilon$ and maximum false positi
 
 \section{Results}
 
-We give a linear time vectorizable algorithm to compute the optimal decision threshold $\tau$. First, we compute the optimal backup filter false positive rates, and then optimize the choice of $\tau$ with dynamic programming. 
+We give a log-linear time vectorizable algorithm to compute the optimal decision threshold $\tau$. First, we compute the optimal backup filter false positive rates, and then optimize the choice of $\tau$ with dynamic programming. 
 
 \subsection{Backup Filter False Positive Rates}
 \label{section:backup_filter}
@@ -104,7 +104,7 @@ Dropping constants and constant factors, we get the following cost function
     C(\tau) &= -\text{M}_\text{TPR} \ln \left( \frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}} \right) 
  - \text{M}_\text{FNR} \ln \left( \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}}\right)
 \end{align*}
-which we can optimize with dynamic programming in $\Theta(n)$ time. We can restrict the choice of $\tau$ such that 
+which we can optimize with dynamic programming in $\Theta(n \lg n)$ time. We can restrict the choice of $\tau$ such that 
 \begin{align}
     \max\left\{\epsilon\frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}}, \epsilon \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}} \right\} \leq \epsilon_\text{max}
 \end{align}

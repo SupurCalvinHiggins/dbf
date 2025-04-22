@@ -76,7 +76,7 @@ I generate random unseen URLs and pass them through the DBF.
 
 ### Adaptive Black-Box Attack
 
-I train a synthetic Transformer to predict if a URL induces a false positive in the DBF. Then, I optimize the URLs from the randomized attack using Adam for the false positive label. I discard previously seen URLs, and pass the adversial URLs through the DBF. I also run a McNemar test to compare this attack against the randomized attack. 
+I train a synthetic Transformer to predict if a URL induces a false positive in the DBF. Then, I optimize the URLs from the randomized attack using Adam for the false positive label. I discard previously seen URLs, and pass the adversarial URLs through the DBF. I also run a McNemar test to compare this attack against the randomized attack. 
 
 ### Targeted Randomized Attack
 

@@ -39,23 +39,6 @@
 
 \frame{\titlepage}
 
-% background (9 slides)
-% AMQ filters
-% bloom filter
-% bloom filter example
-% learned bloom filter
-% learned bloom filter example
-% threat model
-% naor eylon filter
-% downtown bodega filter
-% downtown bodega filter example
-
-% tuning (4 slides)
-% motivation
-% optimal filter FPR
-% optimal threshold
-% results
-
 % ------------------------------------------------------------
 % Slide
 % ------------------------------------------------------------
@@ -297,7 +280,7 @@
     \begin{align*}
         \max\left\{\epsilon\frac{\text{M}_\text{TPR}}{\text{M}_\text{FPR}}, \epsilon \frac{\text{M}_\text{FNR}}{\text{M}_\text{TNR}} \right\} \leq \epsilon_\text{max}
     \end{align*}
-    and can be found in $\Theta(n)$ time with dynamic programming!
+    and can be found in $\Theta(n \lg n)$ time with dynamic programming!
 \end{block}
 
 \end{frame}
@@ -329,15 +312,6 @@
 \end{center}
 
 \end{frame}
-
-% experiments (8 slides)
-% dataset
-% adaptive black box attack
-% embed and unembed procedure
-% careful(!)
-% results
-% targeted randomized attack
-% results
 
 % ------------------------------------------------------------
 % Slide
